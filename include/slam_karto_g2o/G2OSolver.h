@@ -14,6 +14,8 @@
 
 typedef std::vector<karto::Matrix3> CovarianceVector;
 
+extern std::string vertex_msg,edge_msg;
+
 /**
  * @brief Wrapper for G2O to interface with Open Karto
  */

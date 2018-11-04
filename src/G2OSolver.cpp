@@ -15,11 +15,54 @@
 #include "g2o/solvers/cholmod/linear_solver_cholmod.h"
 #include <open_karto/Karto.h>
 #include <ros/console.h>
+#include <ros/ros.h>
+
+#include <fstream>
+#include <string>
+#include <iostream>
+#include <vector>
 
 typedef g2o::BlockSolver< g2o::BlockSolverTraits<-1, -1> > SlamBlockSolver;
 
 typedef g2o::LinearSolverCholmod<SlamBlockSolver::PoseMatrixType> SlamLinearSolver;
 
+std::string edge_msg, vertex_msg;
+
+void Vertex(unsigned int id , float x , float y , float theta){
+	std::ofstream file;	
+	std::string init = "VERTEX_SE2 "; //G2O FORMAT
+        //std::string init = "VERTEX2 "; //TORO FORMAT
+	std::string UID = std::to_string(id);	
+	std::string X = std::to_string(x);
+	std::string Y = std::to_string(y);
+  	std::string Theta = std::to_string(theta);
+	std::string res = init.append(UID).append(" ").append(X).append(" ").append(Y).append(" ").append(Theta);	
+	vertex_msg = res;	
+	//file.open("/home/ebs1/catkin_ws/src/slam_karto_g2o/launch/G2O_vertex.txt" , std::ios_base::app);
+	//file << res << std::endl;
+	//file.close();
+	//printf("--Written to file vertex num %u--\n" , id);
+}
+void Edges(int source , int target , std::vector <double> cov){
+
+	std::ofstream file;	
+	std::string init = "EDGE_SE2 ";	
+        //std::string init = "EDGE2 "; //TORO FORMAT
+	std::string u = std::to_string(source);	
+	std::string v = std::to_string(target);
+	std::vector <std::string> val;
+	for(int i = 0 ; i < cov.size(); i++){
+		std::string s = std::to_string(cov[i]); 
+		val.push_back(s);
+	}
+
+	std::string res = init.append(" ").append(u).append(" ").append(v).append(" ").append(val[0]).append(" ").append(val[1]).append(" ").append(val[2]).append(" ").append(val[3]).append(" ").append(val[4]).append(" ").append(val[5]).append(" ").append(val[6]).append(" ").append(val[7]).append(" ").append(val[8]);
+	
+	edge_msg = res;
+	//file.open("/home/ebs1/catkin_ws/src/slam_karto_g2o/launch/G2O_edge.txt" , std::ios_base::app);
+	//file << res << std::endl;
+	//file.close();
+}
 
 G2OSolver::G2OSolver()
 {
@@ -27,9 +70,9 @@ G2OSolver::G2OSolver()
    auto linearSolver = g2o::make_unique<SlamLinearSolver>();
 
   linearSolver->setBlockOrdering(false);
-  
+
   auto blockSolver = g2o::make_unique<SlamBlockSolver>(std::move(linearSolver));
-  
+
   optimizer_.setAlgorithm(new g2o::OptimizationAlgorithmLevenberg(std::move(blockSolver)));
 
   latestNodeID_ = 0;
@@ -41,9 +84,9 @@ G2OSolver::~G2OSolver()
 {
   // destroy all the singletons
   g2o::Factory::destroy();
-  
+
   g2o::OptimizationAlgorithmFactory::destroy();
-  
+
   g2o::HyperGraphActionLibrary::destroy();
 }
 
@@ -63,20 +106,20 @@ void G2OSolver::Compute()
 
   // Fix the first node in the graph to hold the map in place
   g2o::OptimizableGraph::Vertex* first = optimizer_.vertex(0);
-  
+
   if(!first)
   {
     ROS_ERROR("[g2o] No Node with ID 0 found!");
     return;
   }
-  
+
   first->setFixed(true);
-  
+
   // Do the graph optimization
   optimizer_.initializeOptimization();
-  
+
   int iter = optimizer_.optimize(500);
-  
+
   if (iter > 0)
   {
     ROS_INFO("[g2o] Optimization finished after %d iterations.", iter);
@@ -86,19 +129,19 @@ void G2OSolver::Compute()
     ROS_ERROR("[g2o] Optimization failed, result might be invalid!");
     return;
   }
-  
+
   // Write the result so it can be used by the mapper
   g2o::SparseOptimizer::VertexContainer nodes = optimizer_.activeVertices();
-  
+
   for (g2o::SparseOptimizer::VertexContainer::const_iterator n = nodes.begin(); n != nodes.end(); n++)
   {
-  
+
     double estimate[3];
-  
+
     if((*n)->getEstimateData(estimate))
     {
       karto::Pose2 pose(estimate[0], estimate[1], estimate[2]);
-    
+
       corrections_.push_back(std::make_pair((*n)->id(), pose));
     }
     else
@@ -110,20 +153,32 @@ void G2OSolver::Compute()
 
 void G2OSolver::AddNode(karto::Vertex<karto::LocalizedRangeScan>* pVertex)
 {
-  
+
   karto::Pose2 odom = pVertex->GetObject()->GetCorrectedPose();
-  
+
+  karto::Pose2 odom1 = pVertex->GetObject()->GetOdometricPose();
+
   g2o::VertexSE2* poseVertex = new g2o::VertexSE2;
-  
+
   poseVertex->setEstimate(g2o::SE2(odom.GetX(), odom.GetY(), odom.GetHeading()));
-  
+
   poseVertex->setId(pVertex->GetObject()->GetUniqueId());
-  
+
   optimizer_.addVertex(poseVertex);
 
   latestNodeID_ = pVertex->GetObject()->GetUniqueId();
   
+  Vertex(pVertex->GetObject()->GetUniqueId() , odom1.GetX() ,  odom1.GetY() , odom1.GetHeading());
+	
+  //printf("NODE UID = %d" , pVertex->GetObject()->GetUniqueId());
+
+  // //Laser Scan of each node added
+  // double *range = pVertex->GetObject()->GetRangeReadings();
+  // for(int i = 0 ; i < 360 ; i++)
+  //     printf("%f ",range[i]);
+
   ROS_DEBUG("[g2o] Adding node %d.", pVertex->GetObject()->GetUniqueId());
+  
 
 }
 
@@ -131,75 +186,102 @@ void G2OSolver::AddConstraint(karto::Edge<karto::LocalizedRangeScan>* pEdge)
 {
   // Create a new edge
   g2o::EdgeSE2* odometry = new g2o::EdgeSE2;
-  
+
   // Set source and target
   int sourceID = pEdge->GetSource()->GetObject()->GetUniqueId();
-  
+
   int targetID = pEdge->GetTarget()->GetObject()->GetUniqueId();
-  
+
   odometry->vertices()[0] = optimizer_.vertex(sourceID);
-  
+
   odometry->vertices()[1] = optimizer_.vertex(targetID);
-  
+
+  //Take Edges From Here
+  //printf(" Edge Between start = %u , end = %u\n", sourceID , targetID);
+
+
   if(odometry->vertices()[0] == NULL)
   {
-  
+
     ROS_ERROR("[g2o] Source vertex with id %d does not exist!", sourceID);
-  
+
     delete odometry;
-  
+
     return;
   }
   if(odometry->vertices()[0] == NULL)
   {
-  
+
     ROS_ERROR("[g2o] Target vertex with id %d does not exist!", targetID);
-  
+
     delete odometry;
-  
+
     return;
   }
-  
+
   // Set the measurement (odometry distance between vertices)
   karto::LinkInfo* pLinkInfo = (karto::LinkInfo*)(pEdge->GetLabel());
-  
+
   karto::Pose2 diff = pLinkInfo->GetPoseDifference();
-  
+
   g2o::SE2 measurement(diff.GetX(), diff.GetY(), diff.GetHeading());
-  
+
   odometry->setMeasurement(measurement);
-  
+
   // Set the covariance of the measurement
   karto::Matrix3 precisionMatrix = pLinkInfo->GetCovariance().Inverse();
-  
+
   Eigen::Matrix<double,3,3> info;
+  std::vector <double> vec;
+  vec.push_back(diff.GetX());
+  vec.push_back(diff.GetY());
+  vec.push_back(diff.GetHeading());
   
   info(0,0) = precisionMatrix(0,0);
-  
+ 
   info(0,1) = info(1,0) = precisionMatrix(0,1);
-  
-  info(0,2) = info(2,0) = precisionMatrix(0,2);
+
+  info(0,2) = info(2,0) = precisionMatrix(0,2);  
   
   info(1,1) = precisionMatrix(1,1);
   
   info(1,2) = info(2,1) = precisionMatrix(1,2);
-  
+ 
   info(2,2) = precisionMatrix(2,2);
   
+  //G2O FORMAT
+  vec.push_back(info(0,0));
+  vec.push_back(info(0,1));
+  vec.push_back(info(0,2));
+  vec.push_back(info(1,1));
+  vec.push_back(info(1,2));
+  vec.push_back(info(2,2));
+ 
+ /** TORO FORMAT
+  vec.push_back(info(0,0));
+  vec.push_back(info(0,1));
+  vec.push_back(info(1,1));
+  vec.push_back(info(2,2));
+  vec.push_back(info(0,2));
+  vec.push_back(info(1,2));
+ **/
+
+  Edges(sourceID , targetID , vec);
+
   odometry->setInformation(info);
 
   if(useRobustKernel_)
   {
-  
+
     g2o::RobustKernelDCS* rk = new g2o::RobustKernelDCS;
 
     odometry->setRobustKernel(rk);
 
   }
-  
+
   // Add the constraint to the optimizer
   ROS_DEBUG("[g2o] Adding Edge from node %d to node %d.", sourceID, targetID);
-  
+
   optimizer_.addEdge(odometry);
 
 }
@@ -208,20 +290,20 @@ void G2OSolver::getGraph(std::vector<Eigen::Vector2d> &nodes, std::vector<std::p
 {
   using namespace g2o;
 
-  //HyperGraph::VertexIDMap vertexMap = optimizer_.vertices();
+  HyperGraph::VertexIDMap vertexMap = optimizer_.vertices();
 
-  //HyperGraph::EdgeSet edgeSet = optimizer_.edges();
+  HyperGraph::EdgeSet edgeSet = optimizer_.edges();
 
   double *data = new double[3];
 
-  for (SparseOptimizer::VertexIDMap::iterator it = optimizer_.vertices().begin(); it != optimizer_.vertices().end(); ++it) 
+  for (SparseOptimizer::VertexIDMap::iterator it = optimizer_.vertices().begin(); it != optimizer_.vertices().end(); ++it)
   {
 
     VertexSE2* v = dynamic_cast<VertexSE2*>(it->second);
-    
-    if(v) 
+
+    if(v)
     {
-      
+
       v->getEstimateData(data);
 
       Eigen::Vector2d pose(data[0], data[1]);
@@ -235,36 +317,35 @@ void G2OSolver::getGraph(std::vector<Eigen::Vector2d> &nodes, std::vector<std::p
 
   double *data2 = new double[3];
 
-  // for (SparseOptimizer::EdgeSet::iterator it = optimizer_.edges().begin(); it != optimizer_.edges().end(); ++it) 
-  // {
+  for (SparseOptimizer::EdgeSet::iterator it = optimizer_.edges().begin(); it != optimizer_.edges().end(); ++it)
+  {
 
-  //   EdgeSE2* e = dynamic_cast<EdgeSE2*>(*it);
-    
-  //   if(e) 
-  //   {
-      
-  //     VertexSE2* v1 = dynamic_cast<VertexSE2*>(e->vertices()[0]);
+    EdgeSE2* e = dynamic_cast<EdgeSE2*>(*it);
 
-  //     v1->getEstimateData(data1);
+    if(e)
+    {
 
-  //     Eigen::Vector2d poseFrom(data1[0], data1[1]);
+      VertexSE2* v1 = dynamic_cast<VertexSE2*>(e->vertices()[0]);
 
-  //     VertexSE2* v2 = dynamic_cast<VertexSE2*>(e->vertices()[1]);
+      v1->getEstimateData(data1);
 
-  //     v2->getEstimateData(data2);
+      Eigen::Vector2d poseFrom(data1[0], data1[1]);
 
-  //     Eigen::Vector2d poseTo(data2[0], data2[1]);
+      VertexSE2* v2 = dynamic_cast<VertexSE2*>(e->vertices()[1]);
 
-  //     edges.push_back(std::make_pair(poseFrom, poseTo));
+      v2->getEstimateData(data2);
 
-  //   }
+      Eigen::Vector2d poseTo(data2[0], data2[1]);
 
-  // }
+      edges.push_back(std::make_pair(poseFrom, poseTo));
+
+    }
+
+  }
 
   delete data;
 
   delete data1;
 
   delete data2;
-
 }

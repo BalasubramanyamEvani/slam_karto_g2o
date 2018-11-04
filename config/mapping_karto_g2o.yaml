@@ -7,8 +7,8 @@ minimum_travel_heading: 0.17                  #in radians
 scan_buffer_size: 70
 scan_buffer_maximum_scan_distance: 20
 link_match_minimum_response_fine: 0.7
-link_scan_maximum_distance: 8.0
-loop_search_maximum_distance: 6.0
+link_scan_maximum_distance: 8.0								# play with it
+loop_search_maximum_distance: 6.0							#play
 loop_match_minimum_chain_size: 10
 loop_match_maximum_variance_coarse: 0.4     # gets squared later
 loop_match_minimum_response_coarse: 0.5
@@ -22,7 +22,7 @@ correlation_search_space_resolution: 0.01
 correlation_search_space_smear_deviation: 0.03
 
 # Correlation Parameters - Loop Closure Parameters
-loop_search_space_dimension: 8.0
+loop_search_space_dimension: 8.0							#play
 loop_search_space_resolution: 0.05
 loop_search_space_smear_deviation: 0.025
 

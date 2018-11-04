@@ -1,8 +1,12 @@
 <launch>
-
+  <!--param name="use_sim_time" value="true"/-->
   <node pkg="slam_karto_g2o" type="slam_karto_g2o" name="slam_karto_g2o" output="screen">
-    <remap from="scan" to="base_scan" />
     <rosparam command="load" file="$(find slam_karto_g2o)/config/mapping_karto_g2o.yaml" />
+    <remap from="scan" to="scan"/>
+    <param name="odom_frame" value="odom"/>
+
   </node>
+  <node pkg="rosbag" type="play" name="playBag" args="/home/ebs1/kdB_3floor_testData.bag"/>
+
 
 </launch>
